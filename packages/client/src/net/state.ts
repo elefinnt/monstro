@@ -10,11 +10,14 @@ import type { Direction } from "@monstro/shared";
 export interface PlayerView {
   id: string;
   username: string;
+  mapId: string;
   tx: number;
   ty: number;
   facing: Direction;
   moving: boolean;
   battling: boolean;
+  /** Chosen starter monster id, or "" if not yet chosen. */
+  starterId: string;
 }
 
 /**
