@@ -1,93 +1,105 @@
 import Phaser from "phaser";
 import { speciesById, type MonsterInstance } from "@monstro/shared";
-import { TYPE_COLOURS } from "./types.js";
+import { BARS, BOXES, DEPTH, SPRITES } from "./layout.js";
+import { HEX, NUM, TYPE_NUM } from "./palette.js";
+import { PixelBox } from "./PixelBox.js";
+import { HpBar } from "./HpBar.js";
+import { ExpBar } from "./ExpBar.js";
+import { pixelText } from "./text.js";
 
-export interface BattleHudOptions {
-  /** Top-left of the info box (name + HP). */
-  boxX: number;
-  boxY: number;
-  /** Centre of the monster's body placeholder. */
-  bodyX: number;
-  bodyY: number;
-  /** Player side shows an HP number; enemy side hides it (Pokemon convention). */
-  isPlayer: boolean;
-}
-
-const BOX_W = 220;
-const BOX_H = 56;
-const BAR_W = 160;
-const BAR_H = 8;
-const BODY_R = 44;
-
-/** Renders one combatant: an info box (name/level/HP) and a body placeholder. */
+/** Renders one combatant: a GBA info box (name/level/HP[/EXP]) and a body. */
 export class BattleHud {
   private readonly scene: Phaser.Scene;
-  private readonly opts: BattleHudOptions;
-  private readonly container: Phaser.GameObjects.Container;
+  private readonly isPlayer: boolean;
+  private readonly box: PixelBox;
   private readonly body: Phaser.GameObjects.Arc;
   private readonly nameText: Phaser.GameObjects.Text;
-  private readonly hpText: Phaser.GameObjects.Text;
-  private readonly barFill: Phaser.GameObjects.Rectangle;
+  private readonly levelText: Phaser.GameObjects.Text;
+  private readonly hpBar: HpBar;
+  private readonly hpNumber?: Phaser.GameObjects.Text;
+  private readonly expBar?: ExpBar;
+  private trainerText?: Phaser.GameObjects.Text;
+
   private maxHp = 1;
+  private displayedHp = 1;
 
-  constructor(scene: Phaser.Scene, opts: BattleHudOptions) {
+  constructor(scene: Phaser.Scene, isPlayer: boolean) {
     this.scene = scene;
-    this.opts = opts;
+    this.isPlayer = isPlayer;
 
+    const sprite = isPlayer ? SPRITES.player : SPRITES.opponent;
     this.body = scene.add
-      .circle(opts.bodyX, opts.bodyY, BODY_R, 0xffffff)
-      .setStrokeStyle(3, 0x1b1b1b)
-      .setDepth(5);
+      .circle(sprite.cx, sprite.cy, sprite.r, NUM.white)
+      .setStrokeStyle(1, NUM.boxOutline)
+      .setDepth(DEPTH.sprite);
 
-    const box = scene.add.rectangle(0, 0, BOX_W, BOX_H, 0xfdfdf5).setOrigin(0, 0);
-    box.setStrokeStyle(2, 0x1b1b1b);
+    const r = isPlayer ? BOXES.player : BOXES.opponent;
+    this.box = new PixelBox(scene, r.x, r.y, r.w, r.h, DEPTH.box);
 
-    this.nameText = scene.add
-      .text(10, 8, "", { fontFamily: "monospace", fontSize: "16px", color: "#1b1b1b" })
-      .setOrigin(0, 0);
+    const nameY = r.y + (isPlayer ? 5 : 13);
+    this.nameText = pixelText(scene, r.x + 6, nameY, "", { size: 7 }).setDepth(DEPTH.text);
+    this.levelText = pixelText(scene, r.x + r.w - 6, nameY, "", { size: 7, originX: 1 }).setDepth(
+      DEPTH.text,
+    );
 
-    const barBg = scene.add
-      .rectangle(10, 38, BAR_W, BAR_H, 0x5a5a5a)
-      .setOrigin(0, 0)
-      .setStrokeStyle(1, 0x1b1b1b);
-    this.barFill = scene.add.rectangle(11, 39, BAR_W - 2, BAR_H - 2, 0x4caf50).setOrigin(0, 0);
+    if (isPlayer) {
+      this.hpBar = new HpBar(scene, r.x + 20, r.y + 18, BARS.hpWidth, BARS.hpHeight, DEPTH.bar);
+      this.hpNumber = pixelText(scene, r.x + r.w - 6, r.y + 26, "", {
+        size: 6,
+        originX: 1,
+      }).setDepth(DEPTH.text);
+      this.expBar = new ExpBar(scene, r.x + 22, r.y + 32, BARS.expWidth, BARS.expHeight, DEPTH.bar);
+      pixelText(scene, r.x + 6, r.y + 17, "HP", { size: 6, color: dim() }).setDepth(DEPTH.text);
+      pixelText(scene, r.x + 6, r.y + 30, "EXP", { size: 5, color: dim() }).setDepth(DEPTH.text);
+    } else {
+      this.hpBar = new HpBar(scene, r.x + 20, r.y + 22, BARS.hpWidth, BARS.hpHeight, DEPTH.bar);
+      pixelText(scene, r.x + 6, r.y + 21, "HP", { size: 6, color: dim() }).setDepth(DEPTH.text);
+    }
+  }
 
-    this.hpText = scene.add
-      .text(10 + BAR_W + 8, 34, "", { fontFamily: "monospace", fontSize: "12px", color: "#1b1b1b" })
-      .setOrigin(0, 0)
-      .setVisible(opts.isPlayer);
+  /** Show a trainer name above the name row (PvP opponent only). */
+  showTrainer(name: string): void {
+    if (this.isPlayer) return;
+    const r = BOXES.opponent;
+    if (!this.trainerText) {
+      this.trainerText = pixelText(this.scene, r.x + 6, r.y + 4, "", {
+        size: 6,
+        color: HEX.opponent,
+      }).setDepth(DEPTH.text);
+    }
+    this.trainerText.setText(name).setVisible(true);
+  }
 
-    this.container = scene.add
-      .container(opts.boxX, opts.boxY, [box, this.nameText, barBg, this.barFill, this.hpText])
-      .setDepth(20);
+  hideTrainer(): void {
+    this.trainerText?.setVisible(false);
   }
 
   /** Bind a monster and reset the HUD to its current HP (no animation). */
   setMonster(monster: MonsterInstance): void {
     this.maxHp = monster.stats.hp;
-    this.nameText.setText(`${monster.name}  Lv${monster.level}`);
+    this.displayedHp = monster.currentHp;
+    this.nameText.setText(monster.name);
+    this.levelText.setText(`Lv${monster.level}`);
     const type = speciesById(monster.speciesId)?.types[0] ?? "normal";
-    this.body.setFillStyle(TYPE_COLOURS[type] ?? 0xb0a878);
-    this.body.setAlpha(1).setVisible(true);
-    this.body.setScale(1);
-    this.applyHp(monster.currentHp, false);
+    this.body.setFillStyle(TYPE_NUM[type] ?? NUM.typeNormal);
+    this.body.setAlpha(1).setVisible(true).setScale(1);
+    this.applyHp(monster.currentHp);
   }
 
   /** Tween the HP bar/number to a new value; resolves when the tween ends. */
   animateHp(toHp: number): Promise<void> {
     return new Promise((resolve) => {
-      const ratio = this.scene.tweens.addCounter({
-        from: Number(this.barFill.getData("hp") ?? this.maxHp),
+      this.scene.tweens.addCounter({
+        from: this.displayedHp,
         to: toHp,
         duration: 450,
         ease: "Quad.Out",
-        onUpdate: (tween) => this.applyHp(tween.getValue() ?? toHp, false),
+        onUpdate: (tween) => this.applyHp(tween.getValue() ?? toHp),
         onComplete: () => {
-          this.applyHp(toHp, false);
+          this.applyHp(toHp);
           resolve();
         },
       });
-      void ratio;
     });
   }
 
@@ -97,8 +109,8 @@ export class BattleHud {
       this.scene.tweens.add({
         targets: this.body,
         alpha: 0,
-        scale: 0.4,
-        y: this.opts.bodyY + 20,
+        scale: 0.3,
+        y: this.body.y + 10,
         duration: 500,
         ease: "Quad.In",
         onComplete: () => resolve(),
@@ -106,17 +118,26 @@ export class BattleHud {
     });
   }
 
-  private applyHp(hp: number, _animated: boolean): void {
+  private applyHp(hp: number): void {
     const clamped = Phaser.Math.Clamp(hp, 0, this.maxHp);
-    const frac = this.maxHp > 0 ? clamped / this.maxHp : 0;
-    this.barFill.width = Math.max(0, (BAR_W - 2) * frac);
-    this.barFill.setFillStyle(frac > 0.5 ? 0x4caf50 : frac > 0.2 ? 0xf6c343 : 0xe24a4a);
-    this.barFill.setData("hp", clamped);
-    this.hpText.setText(`${Math.ceil(clamped)}/${this.maxHp}`);
+    this.displayedHp = clamped;
+    this.hpBar.setFraction(this.maxHp > 0 ? clamped / this.maxHp : 0);
+    this.hpNumber?.setText(`${Math.ceil(clamped)}/${this.maxHp}`);
   }
 
   destroy(): void {
-    this.container.destroy();
+    this.box.destroy();
     this.body.destroy();
+    this.nameText.destroy();
+    this.levelText.destroy();
+    this.hpBar.destroy();
+    this.hpNumber?.destroy();
+    this.expBar?.destroy();
+    this.trainerText?.destroy();
   }
+}
+
+/** A slightly faded near-black for the small "HP"/"EXP" captions. */
+function dim(): string {
+  return "#5a5a4e";
 }
