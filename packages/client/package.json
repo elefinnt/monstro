@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@colyseus/schema": "^3.0.76",
+    "@fontsource/press-start-2p": "^5.2.7",
     "@monstro/shared": "workspace:*",
     "colyseus.js": "^0.16.22",
     "phaser": "^3.90.0",
