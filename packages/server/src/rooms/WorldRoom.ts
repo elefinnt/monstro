@@ -11,12 +11,18 @@ import {
   findWarp,
   isStarterId,
   isWalkable,
+  isTallGrass,
+  rollEncounter,
+  createRng,
+  randomSeed,
   starterAt,
+  type Rng,
   type Direction,
   type MoveIntent,
   type FaceIntent,
   type SayIntent,
   type ChooseStarterIntent,
+  type ChallengeIntent,
   type WelcomePayload,
   type MoveRejectedPayload,
   type BubblePayload,
@@ -26,6 +32,7 @@ import {
 import { WorldState } from "../schema/WorldState.js";
 import { PlayerState } from "../schema/PlayerState.js";
 import { loadWorldMap, type LoadedMap } from "../world/mapLoader.js";
+import { startWildBattle, startPvpBattle } from "../world/battleLauncher.js";
 
 const VALID_DIRECTIONS = new Set<Direction>(["up", "down", "left", "right"]);
 
@@ -39,6 +46,8 @@ const VALID_DIRECTIONS = new Set<Direction>(["up", "down", "left", "right"]);
 export class WorldRoom extends Room<WorldState> {
   /** Loaded maps keyed by id, so warps between rooms are instant. */
   private readonly maps = new Map<string, LoadedMap>();
+  /** RNG for authoritative wild-encounter rolls (never trust the client). */
+  private readonly encounterRng: Rng = createRng(randomSeed());
 
   onCreate(options: { mapId?: string }): void {
     const spawnMapId = options?.mapId ?? DEFAULT_MAP_ID;
@@ -61,6 +70,14 @@ export class WorldRoom extends Room<WorldState> {
     this.onMessage<ChooseStarterIntent>(ClientMessage.ChooseStarter, (client, msg) =>
       this.handleChooseStarter(client, msg),
     );
+    this.onMessage<ChallengeIntent>(ClientMessage.Challenge, (client, msg) =>
+      this.handleChallenge(client, msg),
+    );
+    // The client tells us when its battle is over so we can unfreeze the avatar.
+    this.onMessage(ClientMessage.BattleConcluded, (client) => {
+      const player = this.state.players.get(client.sessionId);
+      if (player) player.battling = false;
+    });
   }
 
   onJoin(client: Client, options?: WorldJoinOptions): void {
@@ -122,6 +139,16 @@ export class WorldRoom extends Room<WorldState> {
       return;
     }
 
+    // A trainerless player (no starter yet) can't venture into tall grass — the
+    // wild is too dangerous without a partner. Block the step and nudge them.
+    if (player.starterId === "" && isTallGrass(world.map, nx, ny)) {
+      const rejected: MoveRejectedPayload = { tx: player.tx, ty: player.ty, facing: dir };
+      client.send(ServerMessage.MoveRejected, rejected);
+      const notice: NoticePayload = { text: "I should probably get a starter first." };
+      client.send(ServerMessage.Notice, notice);
+      return;
+    }
+
     player.tx = nx;
     player.ty = ny;
 
@@ -148,11 +175,73 @@ export class WorldRoom extends Room<WorldState> {
       return;
     }
 
+    // Stepping into tall grass can trigger a wild (PvE) battle. The roll is
+    // authoritative. Trainerless players were already blocked from grass above.
+    if (isTallGrass(world.map, nx, ny) && rollEncounter(player.mapId, this.encounterRng)) {
+      void this.launchWildBattle(client, player);
+      return;
+    }
+
     player.moving = true;
     this.clock.setTimeout(() => {
       const p = this.state.players.get(client.sessionId);
       if (p) p.moving = false;
     }, STEP_DURATION_MS);
+  }
+
+  /** Freeze the player and hand them a wild battle to join. */
+  private async launchWildBattle(client: Client, player: PlayerState): Promise<void> {
+    player.battling = true;
+    player.moving = false;
+    try {
+      const payload = await startWildBattle(player);
+      if (!payload) {
+        player.battling = false;
+        return;
+      }
+      client.send(ServerMessage.BattleStart, payload);
+      console.log(`[WorldRoom] ${player.username} entered a wild battle`);
+    } catch (err) {
+      console.error("[WorldRoom] failed to start wild battle:", err);
+      player.battling = false;
+    }
+  }
+
+  /**
+   * Begin a PvP battle: the challenger must be facing another trainer who has a
+   * starter and isn't already battling. Auto-accepted for now (MVP) — a future
+   * version can prompt the target to accept/decline.
+   */
+  private async handleChallenge(client: Client, msg: ChallengeIntent): Promise<void> {
+    const challenger = this.state.players.get(client.sessionId);
+    const target = this.state.players.get(msg?.targetSessionId ?? "");
+    if (!challenger || !target || challenger === target) return;
+    if (challenger.battling || target.battling) return;
+    if (challenger.starterId === "" || target.starterId === "") return;
+    if (challenger.mapId !== target.mapId) return;
+
+    // The target must be on the tile the challenger is facing.
+    const delta = DIRECTION_DELTAS[challenger.facing as Direction];
+    if (target.tx !== challenger.tx + delta.dx || target.ty !== challenger.ty + delta.dy) return;
+
+    const targetClient = this.clients.find((c) => c.sessionId === target.id);
+    if (!targetClient) return;
+
+    challenger.battling = true;
+    target.battling = true;
+    challenger.moving = false;
+    target.moving = false;
+
+    try {
+      const payloads = await startPvpBattle(challenger, target);
+      client.send(ServerMessage.BattleStart, payloads.challenger);
+      targetClient.send(ServerMessage.BattleStart, payloads.opponent);
+      console.log(`[WorldRoom] PvP: ${challenger.username} vs ${target.username}`);
+    } catch (err) {
+      console.error("[WorldRoom] failed to start PvP battle:", err);
+      challenger.battling = false;
+      target.battling = false;
+    }
   }
 
   private handleFace(client: Client, msg: FaceIntent): void {
