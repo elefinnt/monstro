@@ -1,0 +1,23 @@
+node_modules/
+dist/
+build/
+*.log
+.env
+.env.*
+!.env.example
+
+# Prisma / SQLite (dev DB)
+*.sqlite
+*.sqlite-journal
+*.db
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Build caches
+.tsbuildinfo
+*.tsbuildinfo
+.vite/
