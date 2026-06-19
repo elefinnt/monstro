@@ -17,6 +17,15 @@ export class RemotePlayer {
     this.avatar = new Avatar(scene, spawn);
   }
 
+  /** Current world-space position of the avatar (centre of its tile). */
+  get x(): number {
+    return this.avatar.x;
+  }
+
+  get y(): number {
+    return this.avatar.y;
+  }
+
   /** Apply an authoritative position update with interpolation. */
   applyPosition(tx: number, ty: number): void {
     this.avatar.tweenToTile(tx, ty, STEP_DURATION_MS);
