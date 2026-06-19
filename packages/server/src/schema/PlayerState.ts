@@ -7,6 +7,8 @@ import { Schema, type } from "@colyseus/schema";
 export class PlayerState extends Schema {
   @type("string") id = "";
   @type("string") username = "";
+  /** Id of the map this player is currently standing on. */
+  @type("string") mapId = "";
   @type("number") tx = 0;
   @type("number") ty = 0;
   /** One of the Direction values ("up" | "down" | "left" | "right"). */
@@ -15,4 +17,6 @@ export class PlayerState extends Schema {
   @type("boolean") moving = false;
   /** Frozen during a battle (PvP); avatar stays put in the world. */
   @type("boolean") battling = false;
+  /** Chosen starter monster id, or "" if not yet chosen (in-memory only). */
+  @type("string") starterId = "";
 }
