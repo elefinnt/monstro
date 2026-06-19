@@ -22,6 +22,9 @@ export const CAMERA_FOLLOW_LERP = 1;
 /** Identifier of the default/starting overworld map. */
 export const DEFAULT_MAP_ID = "route";
 
+/** Identifier of the indoor starter-selection room. */
+export const STARTER_ROOM_MAP_ID = "lab";
+
 /** Server tick rate (Hz) for the authoritative simulation. */
 export const SERVER_TICK_RATE = 20;
 
