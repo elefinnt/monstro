@@ -21,3 +21,6 @@ Thumbs.db
 .tsbuildinfo
 *.tsbuildinfo
 .vite/
+
+# Personal, uncommitted helper scripts
+scripts/local/
