@@ -13,9 +13,11 @@ import {
   type Direction,
   type SayIntent,
   type ChooseStarterIntent,
+  type ChallengeIntent,
   type MoveRejectedPayload,
   type BubblePayload,
   type NoticePayload,
+  type BattleStartPayload,
 } from "@monstro/shared";
 import { buildWorld, type BuiltWorld } from "../world/worldMap.js";
 import { findInteractable } from "../world/interactables.js";
@@ -162,6 +164,23 @@ export class WorldScene extends Phaser.Scene {
     this.room.onMessage<NoticePayload>(ServerMessage.Notice, (payload) => {
       this.showLocalNotice(payload.text);
     });
+    // The server is starting a battle for us: launch the battle scene and put
+    // the overworld to sleep (the avatar is frozen server-side meanwhile).
+    this.room.onMessage<BattleStartPayload>(ServerMessage.BattleStart, (payload) => {
+      this.enterBattle(payload);
+    });
+  }
+
+  /** Hand off to the BattleScene and sleep the overworld until it returns. */
+  private enterBattle(payload: BattleStartPayload): void {
+    if (this.scene.isActive("battle")) return;
+    this.bubbles.hideAll();
+    this.scene.launch("battle", {
+      reservation: payload.reservation,
+      kind: payload.kind,
+      worldRoom: this.room,
+    });
+    this.scene.sleep();
   }
 
   /** Bind the action keys (A-button equivalents) that trigger interactions. */
@@ -171,6 +190,25 @@ export class WorldScene extends Phaser.Scene {
     for (const code of ["SPACE", "ENTER", "Z"]) {
       kb.addKey(code).on("down", () => this.interact());
     }
+    // Challenge the trainer you're facing to a PvP battle.
+    kb.addKey("C").on("down", () => this.challengeFacedPlayer());
+  }
+
+  /** Send a PvP challenge to the player on the faced tile (if they're a trainer). */
+  private challengeFacedPlayer(): void {
+    if (!this.local) return;
+    const me = this.room.state.players.get(this.room.sessionId);
+    if (!me || me.starterId === "") return;
+
+    const { tx, ty } = this.local.tilePosition;
+    const { dx, dy } = DIRECTION_DELTAS[this.local.facing];
+    const target = this.facingPlayer(tx + dx, ty + dy);
+    if (!target || target.starterId === "") return;
+
+    this.room.send(
+      ClientMessage.Challenge,
+      { targetSessionId: target.id } satisfies ChallengeIntent,
+    );
   }
 
   /**
