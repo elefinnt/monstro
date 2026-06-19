@@ -23,6 +23,8 @@ const TAIL_HALF_WIDTH = 3;
 const TAIL_HEIGHT = 3;
 /** Word-wrap width (world px) before the text breaks onto a new line. */
 const MAX_TEXT_WIDTH = 90;
+/** Keep the bubble at least this many world px inside the camera edges. */
+const SCREEN_MARGIN = 2;
 /** Drawn above avatars (depth 10) so bubbles are never occluded. */
 const BUBBLE_DEPTH = 100;
 
@@ -51,8 +53,9 @@ export class TextBubble {
   private readonly bg: Phaser.GameObjects.Graphics;
   private readonly text: Phaser.GameObjects.Text;
   private hideTimer?: Phaser.Time.TimerEvent;
-  /** Vertical offset from anchor to bubble centre, kept so it can re-follow. */
-  private anchorOffsetY = 0;
+  /** Cached bubble size (world px) so re-anchoring can re-run the layout. */
+  private bubbleW = 0;
+  private bubbleH = 0;
 
   constructor(private readonly scene: Phaser.Scene) {
     this.bg = scene.add.graphics();
@@ -84,19 +87,12 @@ export class TextBubble {
     this.hideTimer = undefined;
 
     this.text.setText(opts.text);
-    // Display size in world px (the text object is scaled down by 1 / TEXT_SS).
-    const textW = this.text.width / TEXT_SS;
-    const textH = this.text.height / TEXT_SS;
-    const w = textW + PAD_X * 2;
-    const h = textH + PAD_Y * 2;
-
-    this.drawBubble(w, h);
-
-    // Container origin is the bubble centre; lift it so the tail tip lands on
-    // the anchor with a small gap, then clamp text to that centre.
     this.text.setPosition(0, 0);
-    this.anchorOffsetY = TAIL_GAP + TAIL_HEIGHT + h / 2;
-    this.container.setPosition(opts.anchorX, opts.anchorY - this.anchorOffsetY);
+    // Display size in world px (the text object is scaled down by 1 / TEXT_SS).
+    this.bubbleW = this.text.width / TEXT_SS + PAD_X * 2;
+    this.bubbleH = this.text.height / TEXT_SS + PAD_Y * 2;
+
+    this.layout(opts.anchorX, opts.anchorY);
     this.container.setVisible(true);
 
     if (opts.durationMs && opts.durationMs > 0) {
@@ -106,7 +102,45 @@ export class TextBubble {
 
   /** Re-anchor a visible bubble (e.g. follow a player walking around). */
   moveTo(anchorX: number, anchorY: number): void {
-    this.container.setPosition(anchorX, anchorY - this.anchorOffsetY);
+    this.layout(anchorX, anchorY);
+  }
+
+  /**
+   * Position the bubble around the anchor while keeping it inside the camera
+   * view: it sits above the anchor by default, flips below when there isn't
+   * room above, and slides horizontally to stay on-screen. The tail is drawn
+   * to keep pointing at the anchor regardless of where the body ends up.
+   */
+  private layout(anchorX: number, anchorY: number): void {
+    const w = this.bubbleW;
+    const h = this.bubbleH;
+    const halfOffset = TAIL_GAP + TAIL_HEIGHT + h / 2;
+    const view = this.scene.cameras.main.worldView;
+
+    // Prefer above the anchor; flip below if the top would clip off-screen.
+    const tailUp = anchorY - halfOffset - h / 2 < view.top + SCREEN_MARGIN;
+    let centreY = anchorY + (tailUp ? halfOffset : -halfOffset);
+    // Keep the body within the view vertically when the bubble fits.
+    if (h + 2 * SCREEN_MARGIN <= view.height) {
+      const minY = view.top + SCREEN_MARGIN + h / 2;
+      const maxY = view.bottom - SCREEN_MARGIN - h / 2;
+      centreY = Phaser.Math.Clamp(centreY, minY, maxY);
+    }
+
+    // Centre on the anchor horizontally, then clamp within the view.
+    let centreX = anchorX;
+    if (w + 2 * SCREEN_MARGIN <= view.width) {
+      const minX = view.left + SCREEN_MARGIN + w / 2;
+      const maxX = view.right - SCREEN_MARGIN - w / 2;
+      centreX = Phaser.Math.Clamp(centreX, minX, maxX);
+    }
+
+    // Tail base slides toward the anchor but stays under the rounded body.
+    const tailLimit = Math.max(0, w / 2 - TAIL_HALF_WIDTH - 4);
+    const tailX = Phaser.Math.Clamp(anchorX - centreX, -tailLimit, tailLimit);
+
+    this.drawBubble(w, h, tailUp, tailX);
+    this.container.setPosition(centreX, centreY);
   }
 
   hide(): void {
@@ -120,7 +154,7 @@ export class TextBubble {
     this.container.destroy();
   }
 
-  private drawBubble(w: number, h: number): void {
+  private drawBubble(w: number, h: number, tailUp: boolean, tailX: number): void {
     const left = -w / 2;
     const top = -h / 2;
     const radius = Math.min(4, h / 2);
@@ -131,21 +165,27 @@ export class TextBubble {
     this.bg.fillRoundedRect(left, top, w, h, radius);
     this.bg.strokeRoundedRect(left, top, w, h, radius);
 
-    // Downward tail pointing at the anchor below the bubble.
-    const tailTop = top + h;
+    // Tail points at the anchor: down off the bottom edge by default, or up off
+    // the top edge when the bubble had to flip below the anchor. The base sits
+    // just inside the body so it blends in, and the tip aligns with `tailX`.
+    const baseY = tailUp ? top + 0.5 : top + h - 0.5;
+    const tipY = tailUp ? top - TAIL_HEIGHT : top + h + TAIL_HEIGHT;
+    const baseLeft = tailX - TAIL_HALF_WIDTH;
+    const baseRight = tailX + TAIL_HALF_WIDTH;
+
     this.bg.fillStyle(FILL, 1);
     this.bg.beginPath();
-    this.bg.moveTo(-TAIL_HALF_WIDTH, tailTop - 0.5);
-    this.bg.lineTo(TAIL_HALF_WIDTH, tailTop - 0.5);
-    this.bg.lineTo(0, tailTop + TAIL_HEIGHT);
+    this.bg.moveTo(baseLeft, baseY);
+    this.bg.lineTo(baseRight, baseY);
+    this.bg.lineTo(tailX, tipY);
     this.bg.closePath();
     this.bg.fillPath();
-    // Re-stroke the tail edges (skip the top so it blends into the body).
+    // Re-stroke the tail edges (skip the base so it blends into the body).
     this.bg.lineStyle(1, STROKE, 1);
     this.bg.beginPath();
-    this.bg.moveTo(-TAIL_HALF_WIDTH, tailTop - 0.5);
-    this.bg.lineTo(0, tailTop + TAIL_HEIGHT);
-    this.bg.lineTo(TAIL_HALF_WIDTH, tailTop - 0.5);
+    this.bg.moveTo(baseLeft, baseY);
+    this.bg.lineTo(tailX, tipY);
+    this.bg.lineTo(baseRight, baseY);
     this.bg.strokePath();
   }
 }
