@@ -77,6 +77,11 @@ export class Avatar {
     return this.container.y;
   }
 
+  /** The direction this avatar is currently facing. */
+  get facingDir(): Direction {
+    return this.facing;
+  }
+
   setFacing(dir: Direction): void {
     this.facing = dir;
     this.applyFacing();
