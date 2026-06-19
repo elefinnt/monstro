@@ -13,12 +13,17 @@
     "dev:client": "pnpm --filter @monstro/client dev",
     "build": "pnpm --filter @monstro/shared build && pnpm --filter @monstro/server build && pnpm --filter @monstro/client build",
     "typecheck": "pnpm -r typecheck",
-    "generate:map": "node scripts/generate-map.mjs"
+    "generate:map": "node scripts/generate-map.mjs",
+    "generate:lab": "node scripts/generate-lab.mjs",
+    "smart-commit": "node scripts/local/smart-commit.mjs"
   },
   "devDependencies": {
     "typescript": "^6.0.3"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild", "msgpackr-extract"]
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "msgpackr-extract"
+    ]
   }
 }
