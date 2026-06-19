@@ -1,25 +1,23 @@
 import Phaser from "phaser";
+import { DEPTH, STRIP } from "./layout.js";
+import { PixelBox } from "./PixelBox.js";
+import { pixelText } from "./text.js";
 
-/** The bottom message box that narrates the battle ("Ember used Ember!"). */
+/**
+ * The bottom message box that narrates the battle ("Ember used Ember!"). An
+ * Emerald-style off-white panel with dark pixel text, spanning the full bottom
+ * strip. Menus overlay its right portion when open.
+ */
 export class BattleLog {
-  private readonly box: Phaser.GameObjects.Rectangle;
+  private readonly box: PixelBox;
   private readonly text: Phaser.GameObjects.Text;
 
-  constructor(scene: Phaser.Scene, x: number, y: number, width: number, height: number) {
-    this.box = scene.add
-      .rectangle(x, y, width, height, 0x10131c)
-      .setOrigin(0, 0)
-      .setStrokeStyle(2, 0xf5f5f5)
-      .setDepth(30);
-    this.text = scene.add
-      .text(x + 14, y + 12, "", {
-        fontFamily: "monospace",
-        fontSize: "16px",
-        color: "#f5f5f5",
-        wordWrap: { width: width - 28 },
-      })
-      .setOrigin(0, 0)
-      .setDepth(31);
+  constructor(scene: Phaser.Scene) {
+    this.box = new PixelBox(scene, 0, STRIP.y, STRIP.fullWidth, STRIP.h, DEPTH.message);
+    this.text = pixelText(scene, 8, STRIP.y + 9, "", {
+      size: 7,
+      wrapWidth: STRIP.fullWidth - 16,
+    }).setDepth(DEPTH.message + 1);
   }
 
   set(message: string): void {
