@@ -2,8 +2,15 @@ import Phaser from "phaser";
 import { TILE_SIZE, buildCollisionGrid, type TiledMap } from "@monstro/shared";
 import { TILESET_TEXTURE, buildTilesetTexture, buildPlayerTexture } from "../render/textures.js";
 import routeMap from "../../../../assets/maps/route.json";
+import labMap from "../../../../assets/maps/lab.json";
 
-const MAP_KEY = "route";
+/** All maps the client can render, keyed by id (mirrors assets/maps/<id>.json). */
+const MAPS: Record<string, TiledMap> = {
+  route: routeMap as unknown as TiledMap,
+  lab: labMap as unknown as TiledMap,
+};
+
+const TILE_LAYERS = ["ground", "grass", "collision"] as const;
 
 export interface BuiltWorld {
   collision: boolean[][];
@@ -11,31 +18,39 @@ export interface BuiltWorld {
   height: number;
   widthPx: number;
   heightPx: number;
+  /** The Phaser tilemap + layers, so the scene can tear them down on a map switch. */
+  tilemap: Phaser.Tilemaps.Tilemap;
+  layers: Phaser.Tilemaps.TilemapLayer[];
 }
 
 /**
- * Renders the Tiled map with placeholder textures and returns the collision grid
- * (derived from the same JSON the server uses) for client-side prediction.
+ * Renders the Tiled map for `mapId` with placeholder textures and returns the
+ * collision grid (derived from the same JSON the server uses) for client-side
+ * prediction, plus the created tilemap/layers for later teardown.
  */
-export function buildWorld(scene: Phaser.Scene): BuiltWorld {
+export function buildWorld(scene: Phaser.Scene, mapId: string): BuiltWorld {
   buildTilesetTexture(scene);
   buildPlayerTexture(scene);
 
-  const data = routeMap as unknown as TiledMap;
+  const data = MAPS[mapId] ?? MAPS.route;
+  const cacheKey = `map-${mapId}`;
 
-  if (!scene.cache.tilemap.exists(MAP_KEY)) {
-    scene.cache.tilemap.add(MAP_KEY, {
+  if (!scene.cache.tilemap.exists(cacheKey)) {
+    scene.cache.tilemap.add(cacheKey, {
       format: Phaser.Tilemaps.Formats.TILED_JSON,
       data,
     });
   }
 
-  const map = scene.make.tilemap({ key: MAP_KEY });
-  const tiles = map.addTilesetImage("placeholder", TILESET_TEXTURE, TILE_SIZE, TILE_SIZE, 0, 0);
+  const tilemap = scene.make.tilemap({ key: cacheKey });
+  const tiles = tilemap.addTilesetImage("placeholder", TILESET_TEXTURE, TILE_SIZE, TILE_SIZE, 0, 0);
+  const layers: Phaser.Tilemaps.TilemapLayer[] = [];
   if (tiles) {
-    map.createLayer("ground", tiles, 0, 0);
-    map.createLayer("grass", tiles, 0, 0);
-    map.createLayer("collision", tiles, 0, 0);
+    for (const name of TILE_LAYERS) {
+      const layer = tilemap.createLayer(name, tiles, 0, 0);
+      // Keep tiles below avatars (Avatar containers use depth 10).
+      if (layer) layers.push(layer.setDepth(0));
+    }
   }
 
   return {
@@ -44,5 +59,7 @@ export function buildWorld(scene: Phaser.Scene): BuiltWorld {
     height: data.height,
     widthPx: data.width * TILE_SIZE,
     heightPx: data.height * TILE_SIZE,
+    tilemap,
+    layers,
   };
 }
