@@ -40,7 +40,7 @@ export class LocalPlayer {
   constructor(
     private readonly scene: Phaser.Scene,
     private readonly room: Room<WorldView>,
-    private readonly collision: CollisionInfo,
+    private collision: CollisionInfo,
     spawn: { tx: number; ty: number; tint: number; label: string },
   ) {
     this.tx = spawn.tx;
@@ -73,6 +73,11 @@ export class LocalPlayer {
     return { tx: this.tx, ty: this.ty };
   }
 
+  /** The direction the player is currently facing. */
+  get facing(): Direction {
+    return this.avatar.facingDir;
+  }
+
   /** Called every frame by the scene. */
   update(): void {
     if (this.moving) return;
@@ -87,6 +92,16 @@ export class LocalPlayer {
     this.bufferedDir = undefined;
     this.avatar.setFacing(facing);
     this.avatar.snapToTile(tx, ty);
+  }
+
+  /** Swap the collision grid (used when the player warps to another map). */
+  setCollision(collision: CollisionInfo): void {
+    this.collision = collision;
+  }
+
+  /** Teleport to a tile with no animation (e.g. after a room transition). */
+  teleport(tx: number, ty: number, facing: Direction): void {
+    this.reconcile(tx, ty, facing);
   }
 
   /**
