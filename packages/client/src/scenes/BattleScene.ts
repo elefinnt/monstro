@@ -15,6 +15,8 @@ import { BattleHud } from "../battle/BattleHud.js";
 import { BattleLog } from "../battle/BattleLog.js";
 import { BattleMenu } from "../battle/BattleMenu.js";
 import { BattleAnimator } from "../battle/BattleAnimator.js";
+import { Battlefield } from "../battle/Battlefield.js";
+import { fitBattleCamera } from "../battle/camera.js";
 import type { BattleRoomView } from "../battle/types.js";
 
 interface BattleSceneData {
@@ -34,6 +36,7 @@ export class BattleScene extends Phaser.Scene {
   private battleRoom?: Room<BattleRoomView>;
   private yourSide = 0;
   private state?: BattleState;
+  private field!: Battlefield;
   private playerHud!: BattleHud;
   private enemyHud!: BattleHud;
   private log!: BattleLog;
@@ -41,6 +44,8 @@ export class BattleScene extends Phaser.Scene {
   private animator!: BattleAnimator;
   private finished = false;
   private greeted = false;
+  /** Serialises async presentation so end-of-battle text never races ahead. */
+  private queue: Promise<void> = Promise.resolve();
 
   constructor() {
     super("battle");
@@ -51,31 +56,27 @@ export class BattleScene extends Phaser.Scene {
     this.finished = false;
     this.greeted = false;
     this.state = undefined;
+    this.queue = Promise.resolve();
   }
 
   create(): void {
-    const { width: w, height: h } = this.scale;
-    this.cameras.main.setBackgroundColor("#223047");
-
-    this.enemyHud = new BattleHud(this, {
-      boxX: 40,
-      boxY: 40,
-      bodyX: w * 0.72,
-      bodyY: h * 0.3,
-      isPlayer: false,
-    });
-    this.playerHud = new BattleHud(this, {
-      boxX: w - 260,
-      boxY: h - 280,
-      bodyX: w * 0.26,
-      bodyY: h - 230,
-      isPlayer: true,
+    fitBattleCamera(this);
+    this.scale.on(Phaser.Scale.Events.RESIZE, this.onResize, this);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.scale.off(Phaser.Scale.Events.RESIZE, this.onResize, this);
     });
 
-    this.log = new BattleLog(this, 20, h - 160, w - 300, 140);
-    this.menu = new BattleMenu(this, w - 270, h - 160, (action) => this.sendAction(action));
+    this.field = new Battlefield(this);
+    this.enemyHud = new BattleHud(this, false);
+    this.playerHud = new BattleHud(this, true);
+    this.log = new BattleLog(this);
+    this.menu = new BattleMenu(this, (action) => this.sendAction(action));
 
     void this.connect();
+  }
+
+  private onResize(): void {
+    fitBattleCamera(this);
   }
 
   private async connect(): Promise<void> {
@@ -97,10 +98,10 @@ export class BattleScene extends Phaser.Scene {
       this.applySnapshot(p.state);
     });
     room.onMessage<BattleEventsPayload>(ServerMessage.BattleEvents, (p) => {
-      void this.playEvents(p);
+      this.enqueue(() => this.playEvents(p));
     });
     room.onMessage<BattleEndedPayload>(ServerMessage.BattleEnded, (p) => {
-      this.handleEnded(p);
+      this.enqueue(() => this.handleEnded(p));
     });
   }
 
@@ -121,9 +122,13 @@ export class BattleScene extends Phaser.Scene {
       this.hudFor(side.index).setMonster(side.party[side.activeIndex]);
     }
 
+    // PvP: show the opposing trainer's name above their monster's name.
+    const foe = state.sides[(this.yourSide ^ 1) as 0 | 1];
+    if (state.kind === "pvp" && foe.trainerName) this.enemyHud.showTrainer(foe.trainerName);
+    else this.enemyHud.hideTrainer();
+
     if (!this.greeted) {
       this.greeted = true;
-      const foe = state.sides[(this.yourSide ^ 1) as 0 | 1];
       const intro =
         state.kind === "wild"
           ? `A wild ${foe.party[foe.activeIndex].name} appeared!`
@@ -134,7 +139,15 @@ export class BattleScene extends Phaser.Scene {
     this.promptIfNeeded();
   }
 
+  /** Chain async presentation tasks so they always play in arrival order. */
+  private enqueue(task: () => Promise<void>): void {
+    this.queue = this.queue
+      .then(task)
+      .catch((err) => console.error("[battle] presentation error:", err));
+  }
+
   private async playEvents(payload: BattleEventsPayload): Promise<void> {
+    if (this.finished) return;
     this.menu.hide();
     await this.animator.play(payload.events, payload.state);
     this.state = payload.state;
@@ -156,16 +169,20 @@ export class BattleScene extends Phaser.Scene {
     this.battleRoom?.send(ClientMessage.BattleAct, { action } satisfies BattleActIntent);
   }
 
-  private handleEnded(payload: BattleEndedPayload): void {
+  private async handleEnded(payload: BattleEndedPayload): Promise<void> {
+    if (this.finished) return;
     this.menu.hide();
-    const text = payload.ranAway
-      ? "You got away safely."
-      : payload.winner === null
-        ? "The battle ended in a draw."
-        : payload.winner === payload.yourSide
-          ? "You won the battle!"
-          : "You were defeated...";
-    this.log.set(text);
+    // On a successful run the "Got away safely!" line is already shown by the
+    // run event animation, so don't overwrite it with a duplicate.
+    if (!payload.ranAway) {
+      const text =
+        payload.winner === null
+          ? "The battle ended in a draw."
+          : payload.winner === payload.yourSide
+            ? "You won the battle!"
+            : "You were defeated...";
+      this.log.set(text);
+    }
     this.time.delayedCall(2200, () => this.finish());
   }
 
