@@ -19,6 +19,7 @@ import {
   type NoticePayload,
   type BattleStartPayload,
 } from "@monstro/shared";
+import { resolveInitialMapId } from "../net/worldClient.js";
 import { buildWorld, type BuiltWorld } from "../world/worldMap.js";
 import { findInteractable } from "../world/interactables.js";
 import { tileToPixel } from "../world/grid.js";
@@ -69,7 +70,7 @@ export class WorldScene extends Phaser.Scene {
 
     this.bubbles = new BubbleManager(this, (id) => this.playerAnchor(id));
 
-    this.loadMap(this.resolveMapId());
+    this.loadMap(resolveInitialMapId(this.room));
     this.registerStateHandlers();
     this.registerMessageHandlers();
     this.registerInteraction();
@@ -79,12 +80,6 @@ export class WorldScene extends Phaser.Scene {
     this.local?.update();
     this.bubbles.update();
     this.dismissPrivateBubbleOnMove();
-  }
-
-  /** The map the local player is currently on (falls back to the room default). */
-  private resolveMapId(): string {
-    const me = this.room.state.players.get(this.room.sessionId);
-    return me?.mapId || this.room.state.mapId;
   }
 
   /**
